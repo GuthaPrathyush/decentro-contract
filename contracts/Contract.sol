@@ -15,7 +15,8 @@ contract Entities {
         User,
         Verifier,
         Admin,
-        Recoverer
+        Recoverer,
+        RegistrationPending
     }
 
     struct Document {
@@ -28,20 +29,13 @@ contract Entities {
     }
 
     struct User {
-        string firstName;
-        string lastName;
         address walletAddress;
-        string email;
-        string mobile;
     }
 }
 
-library Queue {
-    struct QueueItem {
-        bytes32 data;
-        bytes32 next;
-    }
+// queue library for documents
 
+library Queue {
     struct LinkedQueue {
         mapping(bytes32 => bytes32) queueItems;
         bytes32 front;
@@ -88,6 +82,7 @@ library Queue {
             queue.back = bytes32(0); // Queue is now empty
             queue.length = 0;
         }
+        delete queue.queueItems[encodedUserDoc];
     }
 
     // Peek function to see the front item without removing it
@@ -124,6 +119,102 @@ library Queue {
     }
 }
 
+
+
+
+// queue library for user verification.
+
+library UserVerificationQueue {
+
+    struct User {
+        address walletAddress;
+    }
+
+    struct LinkedQueue {
+        mapping(address => address) queueItems;
+        mapping(address => User) queueData;
+        address front;
+        address back;
+        uint256 length;
+    }
+
+    // Enqueue function for adding items to the queue
+    function enqueue(LinkedQueue storage queue, address _user) internal {
+        if (queue.back == address(0)) {
+            queue.queueItems[_user] = address(0);
+            queue.front = _user;
+            queue.back = _user;
+            queue.length = 1;
+        } else {
+            queue.queueItems[queue.back] = _user;
+            queue.queueItems[_user] = address(0);
+            queue.back = _user;
+            queue.length++;
+        }
+    }
+
+    // Dequeue function for removing the front item
+    function dequeue(LinkedQueue storage queue, address _user) internal {
+        require(queue.front != address(0), "Queue is empty");
+        if(queue.front == _user) {
+            queue.front = queue.queueItems[queue.front];
+        }
+        else {
+            address dequeuedData = queue.front;
+            while(dequeuedData != address(0) && queue.queueItems[dequeuedData] != _user) {
+                dequeuedData = queue.queueItems[dequeuedData];
+            }
+            require(dequeuedData != address(0), "The requested user does not exist in the Queue!");
+            queue.queueItems[dequeuedData] = queue.queueItems[queue.queueItems[dequeuedData]];
+            if(queue.back == _user) {
+                queue.back = address(0);
+            }
+        }
+        queue.length--;
+        if (queue.front == address(0)) { 
+            queue.back = address(0); // Queue is now empty
+            queue.length = 0;
+        }
+        delete queue.queueItems[_user];
+        delete queue.queueData[_user];
+    }
+
+    // Peek function to see the front item without removing it
+    function peek(LinkedQueue storage queue) internal view returns (address) {
+        require(queue.front != address(0), "Queue is empty");
+        return queue.front;
+        
+    }
+    function getUsers(LinkedQueue storage queue, uint256 lengthToBeFetched) internal view returns (address[] memory) {
+        // First, count the number of elements in the queue
+        address current = queue.front;
+        lengthToBeFetched = queue.length < lengthToBeFetched? queue.length: lengthToBeFetched;
+
+        // Create the array with the correct size
+        address[] memory users = new address[](lengthToBeFetched);
+        current = queue.front;
+        uint256 index = 0;
+
+        // Traverse the queue and fill the array
+        while (current != address(0)) {
+            users[index] = current;
+            // Move to the next element
+            current = queue.queueItems[current];
+            index++;
+        }
+
+        return users;
+    }
+
+    // Check if queue is empty
+    function isEmpty(LinkedQueue storage queue) internal view returns (bool) {
+        return queue.front == address(0);
+    }
+    function contains(LinkedQueue storage queue, address _user) internal view returns (bool) {
+        return queue.queueItems[_user] == address(0)? queue.back == _user: true;
+    }
+}
+
 contract DecentroLocker is Entities {
 
     mapping(address => User) user;
@@ -140,14 +231,16 @@ contract DecentroLocker is Entities {
     Queue.LinkedQueue private verifierQueue;
     Queue.LinkedQueue private adminQueue;
 
+    // user verification queue(Registration of verifier and admin)
 
-
+    using UserVerificationQueue for UserVerificationQueue.LinkedQueue;
+    UserVerificationQueue.LinkedQueue private verifierRegistrationQueue;
     User[] public allVerifiers;
 
     // Events
-    event UserRegistered(address indexed userAddress, string firstName, string lastName);
+    event UserRegistered(address indexed userAddress);
     event UserEdited(address indexed  userAddress);
-    event VerifierRegistered(address indexed verifierAddress, string firstName, string lastName);
+    event VerifierRegistered(address indexed verifierAddress);
     event VerifierEdited(address indexed userAddress);
     event DocumentUploaded(address indexed userAddress, string ipfsHash);
     event VerifiedByVerifier(address indexed verfierAddress, uint timestamp);
@@ -172,152 +265,47 @@ contract DecentroLocker is Entities {
         _;
     }
 
-    function RegisterUser(
-        string memory _firstName,
-        string memory _lastName,
-        string memory _email,
-        string memory _mobile
-    ) external {
-
-        require(
+ function RegisterUser(uint256 _role) external {
+    require(
         role[msg.sender] == UserRoles.Stranger,
         "User is already registered."
-        );
+    );
 
-        user[msg.sender] = User({
-            firstName: _firstName,
-            lastName: _lastName,
-            walletAddress: msg.sender,
-            email: _email,
-            mobile: _mobile
-        });
-
+    if (_role == 0) {
         role[msg.sender] = UserRoles.User;
-
-        emit UserRegistered(msg.sender, _firstName, _lastName);
+        emit UserRegistered(msg.sender);
+    } else {
+        role[msg.sender] = UserRoles.RegistrationPending;
+        verifierRegistrationQueue.enqueue(msg.sender);
     }
+}
 
-    function EditUser(
-        string memory _firstName,
-        string memory _lastName,
-        string memory _email,
-        string memory _mobile
-    ) external   {
-
-        require(
-        user[msg.sender].walletAddress == msg.sender,
-        "User not authenticated to edit the details."
-    );
-
-
-    user[msg.sender].firstName = _firstName;
-    user[msg.sender].lastName = _lastName;
-    user[msg.sender].email = _email;
-    user[msg.sender].mobile = _mobile;
-
-    emit UserEdited(msg.sender);
-
-   }
-
-
-    function RegisterVerifier(
-        string memory _firstName,
-        string memory _lastName,
-        string memory _email,
-        string memory _mobile
-    ) external  {
-          require(
-        role[msg.sender] == UserRoles.Stranger,
-        "Verifier is already registered."
-    );
-
-        user[msg.sender] = User({
-            firstName: _firstName,
-            lastName: _lastName,
-            email: _email,
-            mobile: _mobile,
-            walletAddress: msg.sender
+    function VerifierRegistration(address _verifier, bool register) external {
+        require(role[msg.sender] == UserRoles.Admin);
+        require(role[_verifier] == UserRoles.RegistrationPending);
+        require(verifierRegistrationQueue.contains(_verifier));
+        if(!register) {
+            verifierRegistrationQueue.dequeue(_verifier);
+            role[_verifier] = UserRoles.Stranger;
+            return ;
+        }
+        UserVerificationQueue.User memory _user = verifierRegistrationQueue.queueData[_verifier];
+        verifierRegistrationQueue.dequeue(_verifier);
+        user[_verifier] = User({
+            walletAddress: _user.walletAddress
         });
+        allVerifiers.push(user[_verifier]);
+        role[_verifier] = UserRoles.Verifier;
 
-        allVerifiers.push(user[msg.sender]);
-        role[msg.sender] = UserRoles.Verifier;
-
-        emit VerifierRegistered(msg.sender, _firstName, _lastName);
+        emit VerifierRegistered(msg.sender);
+        
     }
 
-    function EditVerifier(
-        string memory _firstName,
-        string memory _lastName,
-        string memory _email,
-        string memory _mobile
-        ) external   {
-
-            require(
-            role[msg.sender] == UserRoles.Admin || user[msg.sender].walletAddress == msg.sender,
-            "Verifier not authenticated to edit the details."
-        );
-
-        user[msg.sender].firstName = _firstName;
-        user[msg.sender].lastName = _lastName;
-        user[msg.sender].email = _email;
-        user[msg.sender].mobile = _mobile;
-
-        emit VerifierEdited(msg.sender);
+    function GetVerifierRegistrationsByAdmin() public view onlyAdmin returns (address[] memory) {
+        return verifierRegistrationQueue.getUsers(100);
     }
 
-    function RegisterAdmin(
-        string memory _firstName,
-        string memory _lastName,
-        string memory _email,
-        string memory _mobile
-    ) external  {
-          require(
-        role[msg.sender] == UserRoles.Stranger,
-        "Wallet address is already registered."
-    );
-
-        user[msg.sender] = User({
-            firstName: _firstName,
-            lastName: _lastName,
-            email: _email,
-            mobile: _mobile,
-            walletAddress: msg.sender
-        });
-        role[msg.sender] = UserRoles.Verifier;
-
-        emit VerifierRegistered(msg.sender, _firstName, _lastName);
-    }
-
-    function EditAdmin(
-        string memory _firstName,
-        string memory _lastName,
-        string memory _email,
-        string memory _mobile
-        ) external   {
-
-            require(
-            role[msg.sender] == UserRoles.Admin || user[msg.sender].walletAddress == msg.sender,
-            "Verifier not authenticated to edit the details."
-        );
-
-        user[msg.sender].firstName = _firstName;
-        user[msg.sender].lastName = _lastName;
-        user[msg.sender].email = _email;
-        user[msg.sender].mobile = _mobile;
-
-        emit VerifierEdited(msg.sender);
-    }
-
-//  mapping(address => string[]) DocumentArray;  // documents of each  user;
-//     mapping(string => Document) AllDocuments; // ipfs hash to document
-//     string[] toBeVerified; // contains all the to be verified docs 
-
-
-
-
-
-
-    // *************** Doc upload ******************
+  
     function uploadDocumentsByUser(string memory _ipfsHash, string memory _name) public onlyUser{
         Document memory userDoc = Document({
             name: _name,
@@ -333,12 +321,6 @@ contract DecentroLocker is Entities {
         // toBeVerified.push(_ipfsHash);
         verifierQueue.enqueue(_ipfsHash);
 
-    //    Docs[msg.sender].push((Document({
-    //     name:_name,
-    //     ipfsHash: _ipfsHash,
-    //     status: DocumentStatus.Pending,
-    //     timestamp: block.timestamp})));
-
         emit DocumentUploaded(msg.sender, _ipfsHash);
     }
 
@@ -349,7 +331,6 @@ contract DecentroLocker is Entities {
             AllDocsOfUser[i] = AllDocuments[DocumentArray[msg.sender][i]];
         }
         return AllDocsOfUser;
-        // User can categorise the documents in the frontend based on DocumentStatus
     }
 
     function DocumentVerificationByVerifier(bool verified, string memory _ipfsHash, string memory _reason) public onlyVerifier{
@@ -379,14 +360,6 @@ contract DecentroLocker is Entities {
     }
 
 
-
-    // *****************temporary function to view the queue******************
-    function GetQueue() public view returns (bytes32[] memory){
-        bytes32[] memory currQueue = verifierQueue.getDocuments(100);
-        return currQueue;
-    }
-    // ***********************************************************************
-
     function GetDocumentsByVerfier() public view onlyVerifier returns (Document[] memory) {
         bytes32[] memory currQueue = verifierQueue.getDocuments(100);
         uint256 size = currQueue.length;
@@ -407,8 +380,8 @@ contract DecentroLocker is Entities {
         return documentArrRes;
     }
 
-    function getRole() public view returns (UserRoles) {
-        return role[msg.sender];
+    function getRole() public view returns (uint) {
+        return uint(role[msg.sender]);
     }
 
     function getUser() public view returns (User memory){
@@ -421,15 +394,13 @@ contract DecentroLocker is Entities {
 
 
     // constructor 
-    constructor(string memory _firstname, string memory _lastname, string memory _email, string memory _mobile, address _adminWalletAddress) {
+    constructor(address _adminWalletAddress) {
         User memory admin = User({
-            firstName: _firstname,
-            lastName: _lastname,
-            email: _email,
-            mobile: _mobile,
+ 
             walletAddress: _adminWalletAddress
         });
         user[_adminWalletAddress] = admin;
+        role[_adminWalletAddress] = UserRoles.Admin;
         role[msg.sender] = UserRoles.Recoverer;
     }
 }

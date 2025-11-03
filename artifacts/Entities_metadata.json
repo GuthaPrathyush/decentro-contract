@@ -1,6 +1,6 @@
 {
 	"compiler": {
-		"version": "0.8.30+commit.73712a01"
+		"version": "0.8.26+commit.8a97fa7a"
 	},
 	"language": "Solidity",
 	"output": {
@@ -18,9 +18,9 @@
 	},
 	"settings": {
 		"compilationTarget": {
-			"contracts/Contract.sol": "Entities"
+			"contracts/main.sol": "Entities"
 		},
-		"evmVersion": "prague",
+		"evmVersion": "cancun",
 		"libraries": {},
 		"metadata": {
 			"bytecodeHash": "ipfs"
@@ -32,12 +32,12 @@
 		"remappings": []
 	},
 	"sources": {
-		"contracts/Contract.sol": {
-			"keccak256": "0xfc6589e31f8cf45924f1aa36ea98871749cb1348bf93d8b1dad7ec5f763bac25",
+		"contracts/main.sol": {
+			"keccak256": "0x329890d7b8402f80d9400d0057748634cda5ff9227e8065538319308d469bb49",
 			"license": "MIT",
 			"urls": [
-				"bzz-raw://4f2330fbf77d7dda146ecf3247288ce429438da405172465bcd3e837a7589555",
-				"dweb:/ipfs/Qmd8caeNRMuvRGsNH3wqi6sPzvH6aYBRsjLxx4ZhS8576U"
+				"bzz-raw://003a7aeb6f3ec613b5066a5ad09b977ea45d6fdd61069ad068fc6dc53f4a1ad7",
+				"dweb:/ipfs/QmUtx9j2ikVjVSCmawu1VzFM9H4mbseEkYfHLCVpKxCwWY"
 			]
 		}
 	},

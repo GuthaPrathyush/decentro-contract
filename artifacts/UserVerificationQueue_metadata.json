@@ -18,7 +18,7 @@
 	},
 	"settings": {
 		"compilationTarget": {
-			"contracts/main.sol": "Queue"
+			"contracts/main.sol": "UserVerificationQueue"
 		},
 		"evmVersion": "cancun",
 		"libraries": {},
